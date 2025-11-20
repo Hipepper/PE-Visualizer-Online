@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { PEFile, PERegion, AppState, COLORS, DARK_COLORS } from '../types';
+import { FileSession, PEFile, PERegion, COLORS, DARK_COLORS } from '../types';
 
 interface HexViewerProps {
-  file: PEFile | null;
-  appState: AppState;
+  session: FileSession | null;
+  theme: 'dark' | 'light';
+  hoverOffset: number | null;
   onScroll: (newOffset: number) => void;
   onSelectionChange: (offset: number, size: number) => void;
   onHover: (offset: number | null) => void;
@@ -20,8 +21,9 @@ const ASCII_X = 600;
 const CANVAS_PADDING = 10;
 
 export const HexViewer: React.FC<HexViewerProps> = ({ 
-  file, 
-  appState, 
+  session, 
+  theme,
+  hoverOffset,
   onScroll,
   onSelectionChange,
   onHover 
@@ -32,6 +34,12 @@ export const HexViewer: React.FC<HexViewerProps> = ({
   // State for Drag Selection
   const [dragStartOffset, setDragStartOffset] = useState<number | null>(null);
 
+  const file = session?.file;
+  const viewOffset = session?.viewOffset || 0;
+  const selection = session?.selection;
+  const searchResults = session?.searchResults || [];
+  const currentSearchIndex = session?.currentSearchIndex || -1;
+
   const draw = useCallback(() => {
     if (!file || !canvasRef.current || !containerRef.current) return;
 
@@ -39,7 +47,6 @@ export const HexViewer: React.FC<HexViewerProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const { viewOffset, selection, theme, hoverOffset, searchResults, currentSearchIndex } = appState;
     const isDark = theme === 'dark';
     
     // Dimensions
@@ -181,7 +188,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({
         }
     });
 
-  }, [file, appState]);
+  }, [file, viewOffset, selection, searchResults, currentSearchIndex, theme, hoverOffset]);
 
   useEffect(() => {
     draw();
@@ -210,7 +217,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({
       const lineIndex = Math.floor(y / LINE_HEIGHT);
       if (lineIndex < 0) return null;
 
-      const startLine = Math.floor(appState.viewOffset / BYTES_PER_LINE);
+      const startLine = Math.floor(viewOffset / BYTES_PER_LINE);
       const currentLine = startLine + lineIndex;
       const lineOffset = currentLine * BYTES_PER_LINE;
 
@@ -240,7 +247,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({
         const size = end - start + 1;
         
         // Only update if changed
-        if (appState.selection?.offset !== start || appState.selection?.size !== size) {
+        if (selection?.offset !== start || selection?.size !== size) {
             onSelectionChange(start, size);
         }
     }
@@ -263,11 +270,11 @@ export const HexViewer: React.FC<HexViewerProps> = ({
   const handleWheel = (e: React.WheelEvent) => {
       if (!file) return;
       const deltaLines = Math.sign(e.deltaY) * 3; 
-      const newOffset = Math.max(0, Math.min(file.size - 1, appState.viewOffset + deltaLines * BYTES_PER_LINE));
+      const newOffset = Math.max(0, Math.min(file.size - 1, viewOffset + deltaLines * BYTES_PER_LINE));
       onScroll(newOffset);
   };
   
-  const scrollPercentage = file ? appState.viewOffset / file.size : 0;
+  const scrollPercentage = file ? viewOffset / file.size : 0;
   
   const handleScrollChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!file) return;
@@ -293,7 +300,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({
             min={0} 
             max={file.size - BYTES_PER_LINE} 
             step={BYTES_PER_LINE}
-            value={appState.viewOffset}
+            value={viewOffset}
             onChange={handleScrollChange}
             className="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10 appearance-none"
          />

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { AppState, PEFile, PERegion, SearchResult } from './types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { AppState, PERegion, SearchResult, FileSession } from './types';
 import { parsePE } from './services/peParser';
 import { Sidebar } from './components/Sidebar';
 import { HexViewer } from './components/HexViewer';
@@ -20,15 +20,11 @@ const COPY_MODES: Record<CopyMode, string> = {
 const App: React.FC = () => {
   // Initialize state
   const [appState, setAppState] = useState<AppState>(() => ({
-    file: null,
-    selection: null,
+    sessions: [],
+    activeSessionId: null,
     hoverOffset: null,
     theme: (localStorage.getItem('theme') as 'dark' | 'light') || 'dark',
     isAnimating: false,
-    viewOffset: 0,
-    searchResults: [],
-    currentSearchIndex: -1,
-    isSearchOpen: false
   }));
 
   const [dragOver, setDragOver] = useState(false);
@@ -38,6 +34,21 @@ const App: React.FC = () => {
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [copyMode, setCopyMode] = useState<CopyMode>('hex');
   const [copyFeedback, setCopyFeedback] = useState(false);
+
+  const activeSession = useMemo(() => 
+    appState.sessions.find(s => s.id === appState.activeSessionId) || null, 
+  [appState.sessions, appState.activeSessionId]);
+
+  // Helper to update active session
+  const updateActiveSession = (partial: Partial<FileSession>) => {
+      if (!appState.activeSessionId) return;
+      setAppState(prev => ({
+          ...prev,
+          sessions: prev.sessions.map(s => 
+              s.id === prev.activeSessionId ? { ...s, ...partial } : s
+          )
+      }));
+  };
 
   // Effect to apply theme class
   useEffect(() => {
@@ -51,6 +62,11 @@ const App: React.FC = () => {
 
   // File Loading
   const handleFile = async (file: File) => {
+    if (appState.sessions.length >= 5) {
+        setErrorMsg("Maximum 5 files allowed. Close a tab to open a new file.");
+        return;
+    }
+
     try {
       const buffer = await file.arrayBuffer();
       const pe = parsePE(buffer, file.name, appState.theme === 'dark');
@@ -60,14 +76,23 @@ const App: React.FC = () => {
       }
       
       setErrorMsg(null);
+      
+      // Create new session
+      const newSession: FileSession = {
+          id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+          file: pe,
+          selection: null,
+          viewOffset: 0,
+          searchResults: [],
+          currentSearchIndex: -1,
+          isSearchOpen: false
+      };
+
       setAppState(prev => ({
         ...prev,
-        file: pe,
-        selection: null,
-        viewOffset: 0,
-        isAnimating: true,
-        searchResults: [],
-        currentSearchIndex: -1
+        sessions: [...prev.sessions, newSession],
+        activeSessionId: newSession.id,
+        isAnimating: true
       }));
 
       // Simple animation simulation
@@ -90,12 +115,32 @@ const App: React.FC = () => {
     setAppState(prev => ({ ...prev, theme: prev.theme === 'dark' ? 'light' : 'dark' }));
   };
 
+  const closeSession = (id: string) => {
+      setAppState(prev => {
+          const newSessions = prev.sessions.filter(s => s.id !== id);
+          let newActiveId = prev.activeSessionId;
+          // If closing active session, switch to another
+          if (id === prev.activeSessionId) {
+              newActiveId = newSessions.length > 0 ? newSessions[newSessions.length - 1].id : null;
+          }
+          return {
+              ...prev,
+              sessions: newSessions,
+              activeSessionId: newActiveId
+          };
+      });
+  };
+
+  const switchSession = (id: string) => {
+      setAppState(prev => ({ ...prev, activeSessionId: id }));
+  };
+
   const handleRegionSelect = (region: PERegion) => {
-     setAppState(prev => ({
-         ...prev,
+     if (!activeSession) return;
+     updateActiveSession({
          selection: { offset: region.offset, size: region.size, region },
-         viewOffset: Math.floor(region.offset / 16) * 16 // Align to line
-     }));
+         viewOffset: Math.floor(region.offset / 16) * 16
+     });
   };
 
   const exportPNG = () => {
@@ -111,11 +156,11 @@ const App: React.FC = () => {
 
   // --- Copy Functionality ---
   const getSelectedBytes = (): Uint8Array | null => {
-      if (!appState.file || !appState.selection) return null;
-      const { offset, size } = appState.selection;
+      if (!activeSession || !activeSession.selection) return null;
+      const { offset, size } = activeSession.selection;
       // Safety check
-      if (offset + size > appState.file.size) return null;
-      return new Uint8Array(appState.file.data.buffer.slice(offset, offset + size));
+      if (offset + size > activeSession.file.size) return null;
+      return new Uint8Array(activeSession.file.data.buffer.slice(offset, offset + size));
   };
 
   const handleCopy = async (modeOverride?: CopyMode) => {
@@ -171,33 +216,35 @@ const App: React.FC = () => {
 
   // Search Navigation
   const jumpToSearchResult = (index: number) => {
-      const { searchResults } = appState;
+      if (!activeSession) return;
+      const { searchResults } = activeSession;
       if (index >= 0 && index < searchResults.length) {
           const res = searchResults[index];
-          setAppState(s => ({
-              ...s,
+          updateActiveSession({
               currentSearchIndex: index,
               viewOffset: Math.floor(res.offset / 16) * 16,
-              selection: { offset: res.offset, size: res.size, region: null } 
-          }));
+              selection: { offset: res.offset, size: res.size, region: null }
+          });
       }
   };
 
   const nextResult = () => {
-      if (appState.searchResults.length === 0) return;
-      const next = (appState.currentSearchIndex + 1) % appState.searchResults.length;
+      if (!activeSession || activeSession.searchResults.length === 0) return;
+      const next = (activeSession.currentSearchIndex + 1) % activeSession.searchResults.length;
       jumpToSearchResult(next);
   };
   
   const prevResult = () => {
-      if (appState.searchResults.length === 0) return;
-      const prev = (appState.currentSearchIndex - 1 + appState.searchResults.length) % appState.searchResults.length;
+      if (!activeSession || activeSession.searchResults.length === 0) return;
+      const prev = (activeSession.currentSearchIndex - 1 + activeSession.searchResults.length) % activeSession.searchResults.length;
       jumpToSearchResult(prev);
   };
   
   // Keyboard Shortcuts
   useEffect(() => {
       const handleKey = async (e: KeyboardEvent) => {
+          if (!activeSession) return;
+
           // Ctrl+G: Go to Offset
           if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
               e.preventDefault();
@@ -205,7 +252,7 @@ const App: React.FC = () => {
               if(offsetStr) {
                   const off = parseInt(offsetStr, 16);
                   if(!isNaN(off)) {
-                      setAppState(s => ({ ...s, viewOffset: Math.floor(off / 16) * 16 }));
+                      updateActiveSession({ viewOffset: Math.floor(off / 16) * 16 });
                   }
               }
           }
@@ -213,13 +260,13 @@ const App: React.FC = () => {
           // Ctrl+F: Find
           if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
               e.preventDefault();
-              setAppState(s => ({ ...s, isSearchOpen: !s.isSearchOpen }));
+              updateActiveSession({ isSearchOpen: !activeSession.isSearchOpen });
           }
 
           // Ctrl+C: Copy
           if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
               // If we have a Hex/Byte selection, intercept copy
-              if (appState.selection) {
+              if (activeSession.selection) {
                   e.preventDefault();
                   await handleCopy(); // Uses current copyMode state
               }
@@ -234,7 +281,7 @@ const App: React.FC = () => {
       };
       window.addEventListener('keydown', handleKey);
       return () => window.removeEventListener('keydown', handleKey);
-  }, [appState.searchResults, appState.currentSearchIndex, appState.selection, appState.file, copyMode]);
+  }, [activeSession, copyMode]);
 
   return (
     <div 
@@ -245,40 +292,61 @@ const App: React.FC = () => {
       onClick={() => setShowCopyMenu(false)} // Close menu on click outside
     >
       {/* Header / Toolbar */}
-      <header className="h-12 bg-gray-800 border-b border-gray-700 flex items-center px-4 justify-between shrink-0 z-20 shadow-md">
-        <div className="flex items-center gap-4">
+      <header className="bg-gray-800 border-b border-gray-700 flex items-end px-4 pt-2 space-x-4 shrink-0 z-20 shadow-md h-12 select-none">
+        <div className="flex items-center h-full pb-2 mr-2 shrink-0">
            <h1 className="text-white font-bold text-lg tracking-tight">PE<span className="text-blue-400">Visualizer</span></h1>
-           {appState.file && <span className="text-gray-400 text-sm px-2 py-1 bg-gray-900 rounded font-mono">{appState.file.name}</span>}
         </div>
         
-        <div className="flex items-center gap-2">
-            {!appState.file && (
-                <label className="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm transition-colors">
-                    Open File
-                    <input type="file" className="hidden" onChange={(e) => e.target.files && handleFile(e.target.files[0])} />
-                </label>
-            )}
-            {appState.file && (
+        {/* Tabs Container */}
+        <div className="flex-1 flex items-end overflow-x-auto no-scrollbar gap-1 h-full">
+             {appState.sessions.map(session => (
+                 <div 
+                    key={session.id}
+                    onClick={() => switchSession(session.id)}
+                    className={`
+                        group relative flex items-center min-w-[100px] max-w-[180px] h-8 px-3 rounded-t-md cursor-pointer border-t border-l border-r transition-colors
+                        ${session.id === appState.activeSessionId 
+                            ? 'bg-white dark:bg-gray-950 border-gray-300 dark:border-gray-700 text-blue-600 dark:text-blue-400' 
+                            : 'bg-gray-700 text-gray-400 border-transparent hover:bg-gray-600 hover:text-gray-200'}
+                    `}
+                 >
+                     <span className="truncate text-xs font-medium mr-4 flex-1">{session.file.name}</span>
+                     <button 
+                        onClick={(e) => { e.stopPropagation(); closeSession(session.id); }}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 rounded-sm text-gray-500 hover:bg-red-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                     >
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                             <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                         </svg>
+                     </button>
+                 </div>
+             ))}
+        </div>
+
+        {/* Global Controls */}
+        <div className="flex items-center pb-2 gap-2 shrink-0">
+            <label className={`
+                cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors font-medium flex items-center gap-1
+                ${appState.sessions.length >= 5 ? 'opacity-50 cursor-not-allowed' : ''}
+            `}>
+                <span>+ Open</span>
+                <input 
+                    type="file" 
+                    disabled={appState.sessions.length >= 5}
+                    className="hidden" 
+                    onChange={(e) => e.target.files && handleFile(e.target.files[0])} 
+                />
+            </label>
+
+            {activeSession && (
                 <>
-                     {/* Search Controls */}
-                    <div className="mr-4 flex items-center gap-1">
-                        <button onClick={() => setAppState(s => ({...s, isSearchOpen: true}))} className="text-gray-300 hover:text-white p-1.5 rounded hover:bg-gray-700" title="Find (Ctrl+F)">🔍</button>
-                        {appState.searchResults.length > 0 && (
-                            <div className="flex items-center gap-1 text-gray-300 text-xs bg-gray-700 rounded px-2 py-0.5 ml-2">
-                                <span>{appState.currentSearchIndex + 1} / {appState.searchResults.length}</span>
-                                <button onClick={prevResult} className="hover:text-white px-1 font-bold">▲</button>
-                                <button onClick={nextResult} className="hover:text-white px-1 font-bold">▼</button>
-                            </div>
-                        )}
-                    </div>
-                    
                     {/* Copy Dropdown */}
-                    <div className="relative">
+                    <div className="relative ml-2">
                          <button 
                             onClick={(e) => { e.stopPropagation(); setShowCopyMenu(!showCopyMenu); }}
-                            disabled={!appState.selection}
+                            disabled={!activeSession.selection}
                             className={`
-                                text-xs px-3 py-1.5 rounded flex items-center gap-2 transition-colors min-w-[160px] justify-between
+                                text-xs px-3 py-1 rounded flex items-center gap-2 transition-colors min-w-[140px] justify-between border border-transparent
                                 ${copyFeedback 
                                     ? 'bg-green-600 text-white' 
                                     : 'bg-gray-700 hover:bg-gray-600 text-gray-200 hover:text-white'
@@ -287,11 +355,11 @@ const App: React.FC = () => {
                             `}
                          >
                              <span>{copyFeedback ? 'Copied!' : `Copy: ${COPY_MODES[copyMode]}`}</span>
-                             <span>▾</span>
+                             <span className="text-[10px]">▼</span>
                          </button>
                          
-                         {showCopyMenu && appState.selection && (
-                             <div className="absolute top-full right-0 mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-xl overflow-hidden z-50 py-1">
+                         {showCopyMenu && activeSession.selection && (
+                             <div className="absolute top-full right-0 mt-1 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-xl overflow-hidden z-50 py-1">
                                  {(Object.keys(COPY_MODES) as CopyMode[]).map((mode) => (
                                      <button
                                         key={mode}
@@ -309,10 +377,19 @@ const App: React.FC = () => {
                          )}
                     </div>
 
-                    <button onClick={exportPNG} className="text-gray-300 hover:text-white text-xs px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600 ml-2" title="Export View as PNG">PNG</button>
+                    {/* Search Toggle */}
+                    <button 
+                        onClick={() => updateActiveSession({ isSearchOpen: true })} 
+                        className={`text-gray-300 hover:text-white p-1.5 rounded hover:bg-gray-700 ml-1 ${activeSession.isSearchOpen ? 'text-blue-400 bg-gray-900' : ''}`} 
+                        title="Find (Ctrl+F)"
+                    >
+                        🔍
+                    </button>
+
+                    <button onClick={exportPNG} className="text-gray-300 hover:text-white text-xs px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600 ml-1" title="Export View as PNG">PNG</button>
                 </>
             )}
-            <button onClick={toggleTheme} className="text-gray-400 hover:text-white p-2 rounded ml-2">
+            <button onClick={toggleTheme} className="text-gray-400 hover:text-white p-1.5 rounded ml-1">
                 {appState.theme === 'dark' ? '🌙' : '☀️'}
             </button>
         </div>
@@ -322,24 +399,22 @@ const App: React.FC = () => {
       <div className="flex-1 flex overflow-hidden relative">
         
         {/* Search Dialog */}
-        {appState.file && (
+        {activeSession && (
             <SearchDialog 
-                file={appState.file}
-                isOpen={appState.isSearchOpen}
-                onClose={() => setAppState(s => ({...s, isSearchOpen: false}))}
+                file={activeSession.file}
+                isOpen={activeSession.isSearchOpen}
+                onClose={() => updateActiveSession({ isSearchOpen: false })}
                 onResults={(results) => {
-                    setAppState(s => ({
-                        ...s, 
-                        searchResults: results, 
+                    updateActiveSession({
+                        searchResults: results,
                         currentSearchIndex: results.length > 0 ? 0 : -1
-                    }));
+                    });
                     // Auto-jump to first
                     if(results.length > 0) {
-                        setAppState(s => ({ 
-                            ...s, 
+                        updateActiveSession({
                             viewOffset: Math.floor(results[0].offset / 16) * 16,
                             currentSearchIndex: 0
-                        }));
+                        });
                     }
                 }}
                 onJumpToResult={jumpToSearchResult}
@@ -349,68 +424,71 @@ const App: React.FC = () => {
         {/* Error Overlay */}
         {errorMsg && (
             <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center backdrop-blur-sm">
-                <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-xl max-w-md text-center">
-                    <h3 className="text-red-500 font-bold text-xl mb-2">Error</h3>
-                    <p className="text-gray-700 dark:text-gray-300">{errorMsg}</p>
-                    <button onClick={() => setErrorMsg(null)} className="mt-4 bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600">Close</button>
+                <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-xl max-w-md text-center border border-red-500/20">
+                    <h3 className="text-red-500 font-bold text-xl mb-2">Notice</h3>
+                    <p className="text-gray-700 dark:text-gray-300 mb-4">{errorMsg}</p>
+                    <button onClick={() => setErrorMsg(null)} className="bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-sm font-medium">Close</button>
                 </div>
             </div>
         )}
 
-        {!appState.file && !errorMsg && (
-             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none">
+        {!activeSession && !errorMsg && (
+             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none select-none">
                  <div className="text-6xl mb-4 opacity-20">📂</div>
-                 <p>Drag & Drop a PE file (.exe, .dll) here</p>
-                 <p className="text-sm opacity-60 mt-2">Fully client-side, no data leaves your browser.</p>
+                 <p className="font-medium">Drag & Drop a PE file here</p>
+                 <p className="text-sm opacity-60 mt-2">or click "+ Open" above</p>
              </div>
         )}
 
-        {/* Left Sidebar */}
-        <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0 flex flex-col">
-            <div className="p-2 border-b border-gray-200 dark:border-gray-800 font-semibold text-xs uppercase text-gray-500 tracking-wider">Structure</div>
-            <Sidebar 
-                file={appState.file} 
-                selectedRegion={appState.selection?.region || null} 
-                onSelect={handleRegionSelect} 
-            />
-        </div>
+        {/* Render Active Session Content */}
+        {activeSession && (
+            <div className="flex w-full h-full">
+                {/* Left Sidebar */}
+                <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0 flex flex-col">
+                    <div className="p-2 border-b border-gray-200 dark:border-gray-800 font-semibold text-xs uppercase text-gray-500 tracking-wider">Structure</div>
+                    <Sidebar 
+                        file={activeSession.file} 
+                        selectedRegion={activeSession.selection?.region || null} 
+                        onSelect={handleRegionSelect} 
+                    />
+                </div>
 
-        {/* Main Canvas Area */}
-        <div className="flex-1 bg-white dark:bg-gray-950 relative flex flex-col min-w-0">
-            <div className="flex-1 relative overflow-hidden">
-                <HexViewer 
-                    file={appState.file} 
-                    appState={appState}
-                    onScroll={(off) => setAppState(s => ({...s, viewOffset: off}))}
-                    onSelectionChange={(offset, size) => {
-                        // Find the deepest region that contains this offset
-                        let foundRegion = null;
-                        if(appState.file) {
-                             const search = (regions: PERegion[]) => {
-                                 for(const r of regions) {
-                                     if(offset >= r.offset && offset < r.offset + r.size) {
-                                         foundRegion = r;
-                                         if(r.children) search(r.children);
+                {/* Main Canvas Area */}
+                <div className="flex-1 bg-white dark:bg-gray-950 relative flex flex-col min-w-0">
+                    <div className="flex-1 relative overflow-hidden">
+                        <HexViewer 
+                            session={activeSession}
+                            theme={appState.theme}
+                            hoverOffset={appState.hoverOffset}
+                            onScroll={(off) => updateActiveSession({ viewOffset: off })}
+                            onSelectionChange={(offset, size) => {
+                                // Find the deepest region that contains this offset
+                                let foundRegion = null;
+                                const search = (regions: PERegion[]) => {
+                                     for(const r of regions) {
+                                         if(offset >= r.offset && offset < r.offset + r.size) {
+                                             foundRegion = r;
+                                             if(r.children) search(r.children);
+                                         }
                                      }
-                                 }
-                             };
-                             search(appState.file.regions);
-                        }
+                                };
+                                search(activeSession.file.regions);
 
-                        setAppState(s => ({
-                            ...s, 
-                            selection: { offset, size, region: foundRegion }
-                        }));
-                    }}
-                    onHover={(offset) => setAppState(s => ({ ...s, hoverOffset: offset }))}
-                />
+                                updateActiveSession({
+                                    selection: { offset, size, region: foundRegion }
+                                });
+                            }}
+                            onHover={(offset) => setAppState(s => ({ ...s, hoverOffset: offset }))}
+                        />
+                    </div>
+                    
+                    {/* Bottom Inspector Panel */}
+                    <div className="h-36 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 shrink-0 z-10 shadow-lg">
+                        <Inspector session={activeSession} hoverOffset={appState.hoverOffset} />
+                    </div>
+                </div>
             </div>
-            
-            {/* Bottom Inspector Panel */}
-            <div className="h-36 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 shrink-0 z-10 shadow-lg">
-                <Inspector appState={appState} />
-            </div>
-        </div>
+        )}
 
       </div>
     </div>

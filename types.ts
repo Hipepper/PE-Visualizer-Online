@@ -48,20 +48,26 @@ export interface SearchResult {
   matchVal?: string;
 }
 
-export interface AppState {
-  file: PEFile | null;
+export interface FileSession {
+  id: string;
+  file: PEFile;
   selection: {
     offset: number;
     size: number;
     region: PERegion | null;
   } | null;
-  hoverOffset: number | null;
-  theme: 'dark' | 'light';
-  isAnimating: boolean;
-  viewOffset: number; // Scroll position in the hex view
+  viewOffset: number; // Scroll position for this file
   searchResults: SearchResult[];
   currentSearchIndex: number;
   isSearchOpen: boolean;
+}
+
+export interface AppState {
+  sessions: FileSession[];
+  activeSessionId: string | null;
+  hoverOffset: number | null; // Transient UI state
+  theme: 'dark' | 'light';
+  isAnimating: boolean;
 }
 
 export const COLORS = {

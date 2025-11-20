@@ -1,10 +1,10 @@
 import React from 'react';
-import { AppState, RegionType } from '../types';
+import { FileSession, RegionType } from '../types';
 
-export const Inspector: React.FC<{ appState: AppState }> = ({ appState }) => {
-  const { file, selection, hoverOffset } = appState;
+export const Inspector: React.FC<{ session: FileSession | null; hoverOffset: number | null }> = ({ session, hoverOffset }) => {
+  if (!session || !session.file) return null;
 
-  if (!file) return null;
+  const { file, selection } = session;
 
   // Determine what to show: Selection takes precedence for region details, but we update hex values on hover
   const effectiveOffset = hoverOffset !== null ? hoverOffset : (selection ? selection.offset : null);
