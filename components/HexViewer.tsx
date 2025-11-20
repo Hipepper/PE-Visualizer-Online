@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { PEFile, PERegion, AppState, COLORS, DARK_COLORS } from '../types';
 
 interface HexViewerProps {
@@ -12,11 +12,11 @@ interface HexViewerProps {
 const LINE_HEIGHT = 20;
 const BYTES_PER_LINE = 16;
 const FONT_SIZE = 14;
-const CHAR_WIDTH = 9; // Slightly increased to be safer across browsers
+const CHAR_WIDTH = 9; 
 // Layout Measurements
 const OFFSET_X = 10;
 const HEX_X = 100;
-const ASCII_X = 600; // Increased significantly to prevent overlap
+const ASCII_X = 600;
 const CANVAS_PADDING = 10;
 
 export const HexViewer: React.FC<HexViewerProps> = ({ 
@@ -28,6 +28,9 @@ export const HexViewer: React.FC<HexViewerProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // State for Drag Selection
+  const [dragStartOffset, setDragStartOffset] = useState<number | null>(null);
 
   const draw = useCallback(() => {
     if (!file || !canvasRef.current || !containerRef.current) return;
@@ -49,7 +52,9 @@ export const HexViewer: React.FC<HexViewerProps> = ({
     const bg = isDark ? '#1a202c' : '#f7fafc';
     const textMain = isDark ? '#e2e8f0' : '#2d3748';
     const textDim = isDark ? '#718096' : '#a0aec0';
-    const highlightBg = isDark ? 'rgba(66, 153, 225, 0.3)' : 'rgba(66, 153, 225, 0.3)';
+    
+    // Updated Highlight Colors (Orange)
+    const highlightBg = isDark ? 'rgba(237, 137, 54, 0.5)' : 'rgba(255, 165, 0, 0.4)'; // Orange
     const hoverBg = isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
     
     // Search Colors
@@ -123,6 +128,7 @@ export const HexViewer: React.FC<HexViewerProps> = ({
         if (hoverOffset === byteOffset) {
              const hx = HEX_X + b * 3 * CHAR_WIDTH - 2;
              const hy = i * LINE_HEIGHT + CANVAS_PADDING;
+             // Draw outline for hover or lighter overlay
              ctx.fillStyle = hoverBg;
              ctx.fillRect(hx, hy, 2 * CHAR_WIDTH + 4, LINE_HEIGHT);
              const ax = ASCII_X + b * CHAR_WIDTH;
@@ -181,42 +187,75 @@ export const HexViewer: React.FC<HexViewerProps> = ({
     draw();
   }, [draw]);
 
-  // Handle Mouse Events
+  // Global mouse up to stop dragging even if outside canvas
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+        if (dragStartOffset !== null) {
+            setDragStartOffset(null);
+        }
+    };
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [dragStartOffset]);
+
+
+  // Helper to get offset from mouse coordinates
+  const getOffsetFromCoords = (e: React.MouseEvent) => {
+      if (!file || !canvasRef.current) return null;
+
+      const rect = canvasRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top - CANVAS_PADDING;
+      
+      const lineIndex = Math.floor(y / LINE_HEIGHT);
+      if (lineIndex < 0) return null;
+
+      const startLine = Math.floor(appState.viewOffset / BYTES_PER_LINE);
+      const currentLine = startLine + lineIndex;
+      const lineOffset = currentLine * BYTES_PER_LINE;
+
+      let col = -1;
+      if (x >= HEX_X && x < ASCII_X - 20) {
+         col = Math.floor((x - HEX_X) / (3 * CHAR_WIDTH));
+      } else if (x >= ASCII_X) {
+         col = Math.floor((x - ASCII_X) / CHAR_WIDTH);
+      }
+
+      if (col >= 0 && col < 16) {
+          const offset = lineOffset + col;
+          if (offset < file.size) {
+              return offset;
+          }
+      }
+      return null;
+  };
+
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!file || !canvasRef.current) return;
-    
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top - CANVAS_PADDING;
-    
-    const lineIndex = Math.floor(y / LINE_HEIGHT);
-    if (lineIndex < 0) return;
+    const offset = getOffsetFromCoords(e);
 
-    const startLine = Math.floor(appState.viewOffset / BYTES_PER_LINE);
-    const currentLine = startLine + lineIndex;
-    const lineOffset = currentLine * BYTES_PER_LINE;
-
-    // Check if in Hex area
-    let col = -1;
-    if (x >= HEX_X && x < ASCII_X - 20) {
-       col = Math.floor((x - HEX_X) / (3 * CHAR_WIDTH));
-    } else if (x >= ASCII_X) {
-       col = Math.floor((x - ASCII_X) / CHAR_WIDTH);
-    }
-
-    if (col >= 0 && col < 16) {
-        const offset = lineOffset + col;
-        if (offset < file.size) {
-            onHover(offset);
-            return;
+    // Handle Dragging
+    if (dragStartOffset !== null && offset !== null) {
+        const start = Math.min(dragStartOffset, offset);
+        const end = Math.max(dragStartOffset, offset);
+        const size = end - start + 1;
+        
+        // Only update if changed
+        if (appState.selection?.offset !== start || appState.selection?.size !== size) {
+            onSelectionChange(start, size);
         }
     }
-    onHover(null);
+
+    onHover(offset);
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-     if(appState.hoverOffset !== null) {
-         onSelectionChange(appState.hoverOffset, 1);
+     // Prevent text selection cursor behavior
+     e.preventDefault();
+     
+     const offset = getOffsetFromCoords(e);
+     if (offset !== null) {
+         setDragStartOffset(offset);
+         onSelectionChange(offset, 1);
      }
   };
 

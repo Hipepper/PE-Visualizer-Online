@@ -6,6 +6,17 @@ import { HexViewer } from './components/HexViewer';
 import { Inspector } from './components/Inspector';
 import { SearchDialog } from './components/SearchDialog';
 
+type CopyMode = 'hex' | 'hexArr' | 'cArr' | 'python' | 'binary' | 'base64';
+
+const COPY_MODES: Record<CopyMode, string> = {
+    hex: 'Hex String',
+    hexArr: '0x Array',
+    cArr: 'C Array',
+    python: 'Python Bytes',
+    binary: 'Binary',
+    base64: 'Base64'
+};
+
 const App: React.FC = () => {
   // Initialize state
   const [appState, setAppState] = useState<AppState>(() => ({
@@ -22,7 +33,11 @@ const App: React.FC = () => {
 
   const [dragOver, setDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  
+  // Copy State
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [copyMode, setCopyMode] = useState<CopyMode>('hex');
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   // Effect to apply theme class
   useEffect(() => {
@@ -98,17 +113,26 @@ const App: React.FC = () => {
   const getSelectedBytes = (): Uint8Array | null => {
       if (!appState.file || !appState.selection) return null;
       const { offset, size } = appState.selection;
+      // Safety check
+      if (offset + size > appState.file.size) return null;
       return new Uint8Array(appState.file.data.buffer.slice(offset, offset + size));
   };
 
-  const copyAs = async (format: 'hex' | 'hexArr' | 'cArr' | 'python' | 'binary' | 'base64') => {
+  const handleCopy = async (modeOverride?: CopyMode) => {
+      const targetMode = modeOverride || copyMode;
+      
+      // If user selected a specific mode from menu, update state
+      if (modeOverride) {
+          setCopyMode(modeOverride);
+      }
+
       const bytes = getSelectedBytes();
       if (!bytes) return;
       
       let text = '';
       const arr = Array.from(bytes);
 
-      switch (format) {
+      switch (targetMode) {
           case 'hex':
               text = arr.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
               break;
@@ -129,7 +153,6 @@ const App: React.FC = () => {
                text = arr.map(b => b.toString(2).padStart(8,'0')).join('');
                break;
           case 'base64':
-               // Standard Base64
                let binary = '';
                arr.forEach(b => binary += String.fromCharCode(b));
                text = btoa(binary);
@@ -139,7 +162,8 @@ const App: React.FC = () => {
       try {
           await navigator.clipboard.writeText(text);
           setShowCopyMenu(false);
-          // Optional: Toast notification could go here
+          setCopyFeedback(true);
+          setTimeout(() => setCopyFeedback(false), 2000);
       } catch (err) {
           console.error('Failed to copy', err);
       }
@@ -173,7 +197,8 @@ const App: React.FC = () => {
   
   // Keyboard Shortcuts
   useEffect(() => {
-      const handleKey = (e: KeyboardEvent) => {
+      const handleKey = async (e: KeyboardEvent) => {
+          // Ctrl+G: Go to Offset
           if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
               e.preventDefault();
               const offsetStr = prompt('Jump to Offset (Hex):');
@@ -185,11 +210,22 @@ const App: React.FC = () => {
               }
           }
           
+          // Ctrl+F: Find
           if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
               e.preventDefault();
               setAppState(s => ({ ...s, isSearchOpen: !s.isSearchOpen }));
           }
 
+          // Ctrl+C: Copy
+          if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+              // If we have a Hex/Byte selection, intercept copy
+              if (appState.selection) {
+                  e.preventDefault();
+                  await handleCopy(); // Uses current copyMode state
+              }
+          }
+
+          // F3: Next Match
           if (e.key === 'F3') {
               e.preventDefault();
               if (e.shiftKey) prevResult();
@@ -198,7 +234,7 @@ const App: React.FC = () => {
       };
       window.addEventListener('keydown', handleKey);
       return () => window.removeEventListener('keydown', handleKey);
-  }, [appState.searchResults, appState.currentSearchIndex]);
+  }, [appState.searchResults, appState.currentSearchIndex, appState.selection, appState.file, copyMode]);
 
   return (
     <div 
@@ -241,30 +277,34 @@ const App: React.FC = () => {
                          <button 
                             onClick={(e) => { e.stopPropagation(); setShowCopyMenu(!showCopyMenu); }}
                             disabled={!appState.selection}
-                            className="text-gray-200 hover:text-white text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className={`
+                                text-xs px-3 py-1.5 rounded flex items-center gap-2 transition-colors min-w-[160px] justify-between
+                                ${copyFeedback 
+                                    ? 'bg-green-600 text-white' 
+                                    : 'bg-gray-700 hover:bg-gray-600 text-gray-200 hover:text-white'
+                                }
+                                disabled:opacity-50 disabled:cursor-not-allowed
+                            `}
                          >
-                             Copy Selection ▾
+                             <span>{copyFeedback ? 'Copied!' : `Copy: ${COPY_MODES[copyMode]}`}</span>
+                             <span>▾</span>
                          </button>
+                         
                          {showCopyMenu && appState.selection && (
-                             <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-xl overflow-hidden z-50 py-1">
-                                 <button onClick={() => copyAs('hex')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     Hex String <span className="text-gray-400 ml-2">(4D 5A)</span>
-                                 </button>
-                                 <button onClick={() => copyAs('hexArr')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     0x Array <span className="text-gray-400 ml-2">(0x4D, 0x5A)</span>
-                                 </button>
-                                 <button onClick={() => copyAs('cArr')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     C Array <span className="text-gray-400 ml-2">({'{'} 0x4D... {'}'})</span>
-                                 </button>
-                                 <button onClick={() => copyAs('python')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     Python Bytes <span className="text-gray-400 ml-2">(b'\x4D...')</span>
-                                 </button>
-                                 <button onClick={() => copyAs('binary')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     Binary Stream <span className="text-gray-400 ml-2">(0100...)</span>
-                                 </button>
-                                 <button onClick={() => copyAs('base64')} className="w-full text-left px-4 py-2 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200">
-                                     Base64
-                                 </button>
+                             <div className="absolute top-full right-0 mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-xl overflow-hidden z-50 py-1">
+                                 {(Object.keys(COPY_MODES) as CopyMode[]).map((mode) => (
+                                     <button
+                                        key={mode}
+                                        onClick={() => handleCopy(mode)}
+                                        className={`
+                                            w-full text-left px-4 py-2 text-xs flex justify-between items-center
+                                            ${copyMode === mode ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300' : 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'}
+                                        `}
+                                     >
+                                         {COPY_MODES[mode]}
+                                         {copyMode === mode && <span className="text-blue-500">✓</span>}
+                                     </button>
+                                 ))}
                              </div>
                          )}
                     </div>
