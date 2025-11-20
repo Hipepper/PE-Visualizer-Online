@@ -1,0 +1,5 @@
+{
+  "name": "PE Visualizer",
+  "description": "Interactive Windows PE (Portable Executable) file structure visualizer and hex editor.",
+  "requestFramePermissions": []
+}
