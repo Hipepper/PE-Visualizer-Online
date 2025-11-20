@@ -7,9 +7,10 @@ interface SearchDialogProps {
     isOpen: boolean;
     onClose: () => void;
     onResults: (results: SearchResult[]) => void;
+    onJumpToResult: (index: number) => void;
 }
 
-export const SearchDialog: React.FC<SearchDialogProps> = ({ file, isOpen, onClose, onResults }) => {
+export const SearchDialog: React.FC<SearchDialogProps> = ({ file, isOpen, onClose, onResults, onJumpToResult }) => {
     const [query, setQuery] = useState('');
     const [mode, setMode] = useState<SearchMode>('ascii');
     const [useRegex, setUseRegex] = useState(false);
@@ -125,21 +126,12 @@ export const SearchDialog: React.FC<SearchDialogProps> = ({ file, isOpen, onClos
                              {localResults.slice(0, 100).map((res, idx) => (
                                  <tr 
                                     key={idx} 
-                                    className="hover:bg-blue-50 dark:hover:bg-blue-900/30 cursor-pointer border-b border-gray-100 dark:border-gray-800 last:border-0"
-                                    onClick={() => {
-                                        // Notify App to jump (handled by passing updated results array logic in App usually, but here we might want a direct jump)
-                                        // For now, the user has to use the main navigation arrows, 
-                                        // BUT a click here should ideally jump.
-                                        // Since SearchDialog is a child of App, we can add a jump callback or just rely on 'onResults' updates.
-                                        // Actually, let's just keep it simple: navigation is done via main UI arrows for now, or we add a jump prop.
-                                        // We'll rely on the main App 'next/prev' logic, but clicking here is nice. 
-                                        // Implementation constraint: App.tsx manages selection. We can't easily reach up without a prop.
-                                        // We will leave this as a list for viewing.
-                                    }}
+                                    className="hover:bg-blue-50 dark:hover:bg-blue-900/30 cursor-pointer border-b border-gray-100 dark:border-gray-800 last:border-0 transition-colors duration-75"
+                                    onClick={() => onJumpToResult(idx)}
                                  >
                                      <td className="px-2 py-1">0x{res.offset.toString(16).toUpperCase()}</td>
                                      <td className="px-2 py-1">{res.rva ? `0x${res.rva.toString(16).toUpperCase()}` : '-'}</td>
-                                     <td className="px-2 py-1 truncate max-w-[100px]">{res.matchVal}</td>
+                                     <td className="px-2 py-1 truncate max-w-[100px] text-gray-600 dark:text-gray-300">{res.matchVal}</td>
                                  </tr>
                              ))}
                              {localResults.length > 100 && (

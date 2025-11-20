@@ -302,6 +302,7 @@ const App: React.FC = () => {
                         }));
                     }
                 }}
+                onJumpToResult={jumpToSearchResult}
             />
         )}
 
