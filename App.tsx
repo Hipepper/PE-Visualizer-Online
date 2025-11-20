@@ -292,13 +292,16 @@ const App: React.FC = () => {
       onClick={() => setShowCopyMenu(false)} // Close menu on click outside
     >
       {/* Header / Toolbar */}
-      <header className="bg-gray-800 border-b border-gray-700 flex items-end px-4 pt-2 space-x-4 shrink-0 z-20 shadow-md h-12 select-none">
-        <div className="flex items-center h-full pb-2 mr-2 shrink-0">
+      {/* Changed items-end to items-stretch to allow independent alignment of children */}
+      <header className="bg-gray-800 border-b border-gray-700 flex items-stretch px-4 shrink-0 z-20 shadow-md h-12 select-none">
+        {/* Title - Center Aligned */}
+        <div className="flex items-center mr-4 shrink-0">
            <h1 className="text-white font-bold text-lg tracking-tight">PE<span className="text-blue-400">Visualizer</span></h1>
         </div>
         
-        {/* Tabs Container */}
-        <div className="flex-1 flex items-end overflow-x-auto no-scrollbar gap-1 h-full">
+        {/* Tabs Container - Bottom Aligned */}
+        {/* Added min-w-0 to handle flex shrinking properly */}
+        <div className="flex-1 flex items-end overflow-x-auto no-scrollbar gap-1 min-w-0">
              {appState.sessions.map(session => (
                  <div 
                     key={session.id}
@@ -323,8 +326,8 @@ const App: React.FC = () => {
              ))}
         </div>
 
-        {/* Global Controls */}
-        <div className="flex items-center pb-2 gap-2 shrink-0">
+        {/* Global Controls - Center Aligned */}
+        <div className="flex items-center gap-2 shrink-0 ml-4">
             <label className={`
                 cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-xs transition-colors font-medium flex items-center gap-1
                 ${appState.sessions.length >= 5 ? 'opacity-50 cursor-not-allowed' : ''}
