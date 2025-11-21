@@ -76,7 +76,7 @@ const App: React.FC = () => {
       const view = new DataView(buffer);
       let parsedFile: ParsedFile | null = null;
       
-      if (view.byteLength > 4) {
+      if (view.byteLength >= 4) {
           const magic = view.getUint32(0, false); // Big Endian check
           
           if (view.getUint16(0, true) === 0x5A4D) { // 'MZ'
@@ -84,14 +84,16 @@ const App: React.FC = () => {
           } else if (
               magic === 0xFEEDFACE || magic === 0xCEFAEDFE || // Mach-O 32
               magic === 0xFEEDFACF || magic === 0xCFFAEDFE || // Mach-O 64
-              magic === 0xCAFEBABE || magic === 0xBEBAFECA    // Mach-O Fat
+              magic === 0xCAFEBABE || magic === 0xBEBAFECA || // Mach-O Fat
+              magic === 0xCAFEBABF || magic === 0xBFBAFECA    // Mach-O Fat 64
           ) {
               parsedFile = parseMachO(buffer, file.name, appState.theme === 'dark');
           } else {
-              // Fallback / Unknown
+              // Fallback / Unknown - Try PE first
                parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
           }
       } else {
+          // Small files fallback to PE parser which handles small file errors gracefully
           parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
       }
 
@@ -123,7 +125,7 @@ const App: React.FC = () => {
       // Simple animation simulation
       setTimeout(() => setAppState(s => ({ ...s, isAnimating: false })), 1000);
     } catch (e) {
-      setErrorMsg('Failed to parse file');
+      setErrorMsg('Failed to parse file: ' + (e instanceof Error ? e.message : 'Unknown error'));
       console.error(e);
     }
   };

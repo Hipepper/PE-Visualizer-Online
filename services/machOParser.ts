@@ -74,9 +74,13 @@ const CPU_TYPES: Record<number, string> = {
 };
 
 const formatHex = (val: number | bigint, pad: number = 0) => '0x' + val.toString(16).toUpperCase().padStart(pad, '0');
+
 const readString = (view: DataView, offset: number, length: number): string => {
     let str = '';
-    for (let i = 0; i < length; i++) {
+    const maxLen = Math.min(length, view.byteLength - offset);
+    if (maxLen <= 0) return '';
+
+    for (let i = 0; i < maxLen; i++) {
       const charCode = view.getUint8(offset + i);
       if (charCode === 0) break;
       str += String.fromCharCode(charCode);
@@ -85,40 +89,36 @@ const readString = (view: DataView, offset: number, length: number): string => {
 };
 
 // --- Helper: Parse a single Mach-O slice ---
-// This returns regions and metadata to be appended to the main list or nested
 const parseMachOAtOffset = (
     view: DataView, 
     offset: number, 
-    sizeLimit: number,
+    sizeLimit: number, 
     palette: any,
     prefix: string = ""
 ): { regions: PERegion[], sectionsMetadata: SectionMetadata[] } => {
     const regions: PERegion[] = [];
     const sectionsMetadata: SectionMetadata[] = [];
 
-    // Check bounds
-    if (offset + 4 > view.byteLength) return { regions, sectionsMetadata };
+    // 1. Safe Bounds Check for Header (at least magic + cputype + sub + filetype + ncmds + sizeofcmds + flags = 28 bytes)
+    if (offset + 28 > view.byteLength) return { regions, sectionsMetadata };
 
-    // 1. Determine Endianness and Arch
+    // 2. Determine Endianness and Arch
     const magic = view.getUint32(offset, false); // Read Big Endian first
     let isLE = false;
     let is64 = false;
 
-    if (magic === MAGIC_32_LE) { isLE = false; is64 = false; }
-    else if (magic === MAGIC_32_BE) { isLE = true; is64 = false; }
-    else if (magic === MAGIC_64_LE) { isLE = false; is64 = true; }
-    else if (magic === MAGIC_64_BE) { isLE = true; is64 = true; }
+    if (magic === MAGIC_32_LE) { isLE = true; is64 = false; }
+    else if (magic === MAGIC_32_BE) { isLE = false; is64 = false; }
+    else if (magic === MAGIC_64_LE) { isLE = true; is64 = true; }
+    else if (magic === MAGIC_64_BE) { isLE = false; is64 = true; }
     else {
-        // Not a valid Mach-O header at this offset
         return { regions, sectionsMetadata };
     }
 
-    // 2. Header
     const headerSize = is64 ? 32 : 28;
     if (offset + headerSize > view.byteLength) return { regions, sectionsMetadata };
 
     const cpuType = view.getInt32(offset + 4, isLE);
-    const cpuSubtype = view.getInt32(offset + 8, isLE);
     const fileType = view.getUint32(offset + 12, isLE);
     const nCmds = view.getUint32(offset + 16, isLE);
     const sizeofCmds = view.getUint32(offset + 20, isLE);
@@ -145,6 +145,7 @@ const parseMachOAtOffset = (
 
     // 3. Load Commands
     let currentCmdOffset = offset + headerSize;
+    
     const loadCommandsRegion: PERegion = {
         name: `${prefix}Load Commands`,
         offset: currentCmdOffset,
@@ -154,11 +155,22 @@ const parseMachOAtOffset = (
         children: []
     };
 
-    for (let i = 0; i < nCmds; i++) {
+    // Limit nCmds to prevent potential infinite loops on malformed files
+    const safeNCmds = Math.min(nCmds, 2000); 
+
+    for (let i = 0; i < safeNCmds; i++) {
+        // Safe guard: Need 8 bytes to read command and size
         if (currentCmdOffset + 8 > view.byteLength) break;
         
         const cmd = view.getUint32(currentCmdOffset, isLE);
         const cmdSize = view.getUint32(currentCmdOffset + 4, isLE);
+        
+        // Safe guard: malformed cmdSize (must be at least 8 for header)
+        // And entire command must fit in file
+        if (cmdSize < 8 || currentCmdOffset + cmdSize > view.byteLength) {
+            break;
+        }
+
         const cmdName = LC_TYPES[cmd] || formatHex(cmd);
 
         const cmdRegion: PERegion = {
@@ -177,14 +189,15 @@ const parseMachOAtOffset = (
             ]
         };
 
-        // Parse Segments to find sections (LC_SEGMENT or LC_SEGMENT_64)
+        // Parse Segments (LC_SEGMENT or LC_SEGMENT_64)
         if (cmd === 0x1 || cmd === 0x19) {
             const isSeg64 = cmd === 0x19;
-            // Bounds check for segment structure
-            if (currentCmdOffset + (isSeg64 ? 72 : 56) <= view.byteLength) {
+            const segHeaderSize = isSeg64 ? 72 : 56;
+
+            // Check if command is large enough to contain segment header
+            if (cmdSize >= segHeaderSize && currentCmdOffset + segHeaderSize <= view.byteLength) {
                 const segName = readString(view, currentCmdOffset + 8, 16);
                 const vmAddr = isSeg64 ? view.getBigUint64(currentCmdOffset + 24, isLE) : BigInt(view.getUint32(currentCmdOffset + 24, isLE));
-                const vmSize = isSeg64 ? view.getBigUint64(currentCmdOffset + 32, isLE) : BigInt(view.getUint32(currentCmdOffset + 28, isLE));
                 const fileOff = isSeg64 ? view.getBigUint64(currentCmdOffset + 40, isLE) : BigInt(view.getUint32(currentCmdOffset + 32, isLE));
                 const fileSize = isSeg64 ? view.getBigUint64(currentCmdOffset + 48, isLE) : BigInt(view.getUint32(currentCmdOffset + 36, isLE));
                 
@@ -201,14 +214,15 @@ const parseMachOAtOffset = (
 
                 // Add Section Headers
                 const sectionHeaderSize = isSeg64 ? 80 : 68;
-                let sectOffset = currentCmdOffset + (isSeg64 ? 72 : 56);
+                let sectOffset = currentCmdOffset + segHeaderSize;
                 
                 for(let s=0; s<nSects; s++) {
-                    if (sectOffset + sectionHeaderSize > view.byteLength) break;
+                    // Ensure section header fits within the command size and file bounds
+                    if (sectOffset + sectionHeaderSize > currentCmdOffset + cmdSize || sectOffset + sectionHeaderSize > view.byteLength) break;
+                    
                     const sName = readString(view, sectOffset, 16);
                     const segNameRef = readString(view, sectOffset + 16, 16);
                     
-                    // Offsets for Addr/Size vary by arch
                     const sAddr = isSeg64 ? view.getBigUint64(sectOffset + 32, isLE) : BigInt(view.getUint32(sectOffset + 32, isLE));
                     const sSize = isSeg64 ? view.getBigUint64(sectOffset + 40, isLE) : BigInt(view.getUint32(sectOffset + 36, isLE));
                     const sOffset = view.getUint32(sectOffset + (isSeg64 ? 48 : 40), isLE);
@@ -217,24 +231,7 @@ const parseMachOAtOffset = (
                     const sOffsetNum = Number(sOffset);
                     const sAddrNum = Number(sAddr);
 
-                    // Since this slice might be inside a fat binary, the sOffset is absolute from file start.
-                    // Mach-O internal offsets are absolute file offsets, unless it's a library or object file where things get complex.
-                    // For standard executables in Fat binaries, offsets are from start of file (not start of slice), 
-                    // BUT sometimes they are relative if it's an archive.
-                    // In Mach-O Fat binaries (Universal), the `offset` in `fat_arch` points to the start of the Mach-O.
-                    // Inside that Mach-O, the `fileoff` in LC_SEGMENT is often 0-based from the start of that Mach-O slice?
-                    // Actually, usually `fileoff` in LC_SEGMENT is 0 if it includes the header.
-                    // Let's interpret `fileOff` relative to the Slice Start if it's a fat binary?
-                    // NO: In standard Apple Universal binaries, the offsets in LC_SEGMENT are relative to the beginning of the file containing the architecture (the slice start). 
-                    // However, since we pass the DataView of the whole file, we need to adjust if we want to read data.
-                    
-                    // WAIT: In a Fat Binary, the offsets in the Mach-O headers inside the slices are typically relative to the start of the FAT file?
-                    // Actually, NO. The Mach-O headers inside a FAT binary are self-contained.
-                    // The `fileoff` in `LC_SEGMENT` is typically 0 for the `__TEXT` segment which includes the Mach-O header.
-                    // BUT, physically in the file, that header is at `slice_offset`.
-                    // So, `Absolute Offset = Slice Offset + Segment File Offset`.
-                    // Since we are parsing at `offset` (which is Slice Offset), we need to add it.
-                    
+                    // Calculated absolute offset (assuming well-formed binary)
                     const absoluteSectionOffset = offset + sOffsetNum;
 
                     cmdRegion.children?.push({
@@ -249,7 +246,6 @@ const parseMachOAtOffset = (
                             Address: formatHex(sAddr),
                             Size: formatHex(sSize),
                             Offset: formatHex(sOffset),
-                            RealOffset: formatHex(absoluteSectionOffset)
                         }
                     });
 
@@ -264,16 +260,15 @@ const parseMachOAtOffset = (
                     sectOffset += sectionHeaderSize;
                 }
 
-                // Add Segment Data Region
+                // Add Segment Data Region if valid
                 const fileOffNum = Number(fileOff);
                 const fileSizeNum = Number(fileSize);
                 const absoluteSegmentOffset = offset + fileOffNum;
 
                 if (fileSizeNum > 0 && absoluteSegmentOffset + fileSizeNum <= view.byteLength) {
-                     // For Text segment, it usually overlaps headers. We only add it if it doesn't obscure everything,
-                     // or we rely on the tree view handling overlaps.
-                     // Let's add it to the root regions list for this slice.
-                     if (fileOffNum >= headerSize + sizeofCmds) { // Heuristic: only add data if it's after commands
+                     // Don't add if it obscures the header (common in __TEXT)
+                     // Or add it but rely on order. We'll just check if it starts after commands to be cleaner visually.
+                     // if (fileOffNum >= headerSize + sizeofCmds) {
                         regions.push({
                             name: `${prefix}Segment: ${segName}`,
                             offset: absoluteSegmentOffset,
@@ -282,15 +277,17 @@ const parseMachOAtOffset = (
                             color: palette.SEGMENT,
                             description: `Data for ${segName} (${cpuName})`
                         });
-                     }
+                     // }
                 }
             }
         }
         
         // Handle LC_MAIN (Entry Point)
         if (cmd === 0x80000028) { // LC_MAIN
-             const entryOffset = view.getBigUint64(currentCmdOffset + 8, isLE);
-             if (cmdRegion.details) cmdRegion.details.EntryOffset = formatHex(entryOffset);
+             if (currentCmdOffset + 16 <= view.byteLength && cmdSize >= 16) {
+                 const entryOffset = view.getBigUint64(currentCmdOffset + 8, isLE);
+                 if (cmdRegion.details) cmdRegion.details.EntryOffset = formatHex(entryOffset);
+             }
         }
 
         loadCommandsRegion.children?.push(cmdRegion);
@@ -302,14 +299,13 @@ const parseMachOAtOffset = (
     return { regions, sectionsMetadata };
 };
 
-
 export const parseMachO = (buffer: ArrayBuffer, fileName: string, isDarkMode: boolean = true): ParsedFile => {
     const view = new DataView(buffer);
     const regions: PERegion[] = [];
     const sectionsMetadata: SectionMetadata[] = [];
     const palette = isDarkMode ? DARK_COLORS : COLORS;
 
-    if (view.byteLength < 28) {
+    if (view.byteLength < 4) {
         return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'File too small', format: 'Mach-O' };
     }
 
@@ -317,6 +313,11 @@ export const parseMachO = (buffer: ArrayBuffer, fileName: string, isDarkMode: bo
 
     // Detect Fat Binary
     if (magic === FAT_MAGIC_BE || magic === FAT_CIGAM_LE || magic === FAT_MAGIC_64_BE || magic === FAT_CIGAM_64_LE) {
+        
+        if (view.byteLength < 8) {
+             return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'Fat Binary too small', format: 'Mach-O' };
+        }
+
         const isLE = (magic === FAT_CIGAM_LE || magic === FAT_CIGAM_64_LE);
         const nFatArch = view.getUint32(4, isLE);
         
@@ -334,19 +335,13 @@ export const parseMachO = (buffer: ArrayBuffer, fileName: string, isDarkMode: bo
 
         // Parse Arch Definitions
         let offset = 8;
-        for (let i = 0; i < nFatArch; i++) {
-            // struct fat_arch {
-            //    cpu_type_t  cputype;
-            //    cpu_subtype_t cpusubtype;
-            //    uint32_t    offset;
-            //    uint32_t    size;
-            //    uint32_t    align;
-            // };
-            const archStructSize = 20; // standard fat_arch is 20 bytes
+        const safeNArchs = Math.min(nFatArch, 100); // Safety limit
+
+        for (let i = 0; i < safeNArchs; i++) {
+            const archStructSize = 20; // struct fat_arch
             if (offset + archStructSize > view.byteLength) break;
 
             const cputype = view.getInt32(offset, isLE);
-            const cpusubtype = view.getInt32(offset + 4, isLE);
             const sliceOffset = view.getUint32(offset + 8, isLE);
             const sliceSize = view.getUint32(offset + 12, isLE);
             const align = view.getUint32(offset + 16, isLE);
@@ -367,11 +362,11 @@ export const parseMachO = (buffer: ArrayBuffer, fileName: string, isDarkMode: bo
                 }
             });
 
-            // Recursively parse the slice
+            // Recursively parse the slice if valid
             if (sliceOffset > 0 && sliceOffset + sliceSize <= view.byteLength) {
                 const sliceParse = parseMachOAtOffset(view, sliceOffset, sliceSize, palette, `[${cpuName}] `);
                 
-                // Create a container region for the slice for better visualization
+                // Create a container region for the slice
                 regions.push({
                     name: `Slice: ${cpuName}`,
                     offset: sliceOffset,
@@ -379,12 +374,9 @@ export const parseMachO = (buffer: ArrayBuffer, fileName: string, isDarkMode: bo
                     type: RegionType.SEGMENT,
                     color: palette.OVERLAY,
                     description: `Full binary for ${cpuName}`,
-                    // Don't nest children too deep, just push them to main regions list or as children?
-                    // Since offsets are global, pushing to main list is fine, but nesting keeps sidebar clean.
                     children: sliceParse.regions
                 });
 
-                // Add metadata
                 sectionsMetadata.push(...sliceParse.sectionsMetadata);
             }
 
