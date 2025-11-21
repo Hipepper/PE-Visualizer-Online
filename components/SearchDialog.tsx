@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { PEFile, SearchResult } from '../types';
+import { ParsedFile, SearchResult } from '../types';
 import { searchPE, SearchMode } from '../services/searchService';
 
 interface SearchDialogProps {
-    file: PEFile;
+    file: ParsedFile;
     isOpen: boolean;
     onClose: () => void;
     onResults: (results: SearchResult[]) => void;

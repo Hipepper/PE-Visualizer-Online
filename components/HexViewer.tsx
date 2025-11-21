@@ -1,5 +1,6 @@
+
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { FileSession, PEFile, PERegion, COLORS, DARK_COLORS } from '../types';
+import { FileSession, ParsedFile, PERegion, COLORS, DARK_COLORS } from '../types';
 
 interface HexViewerProps {
   session: FileSession | null;

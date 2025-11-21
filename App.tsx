@@ -1,6 +1,8 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
-import { AppState, PERegion, SearchResult, FileSession } from './types';
+import { AppState, PERegion, SearchResult, FileSession, ParsedFile } from './types';
 import { parsePE } from './services/peParser';
+import { parseMachO } from './services/machOParser';
 import { Sidebar } from './components/Sidebar';
 import { HexViewer } from './components/HexViewer';
 import { Inspector } from './components/Inspector';
@@ -69,9 +71,31 @@ const App: React.FC = () => {
 
     try {
       const buffer = await file.arrayBuffer();
-      const pe = parsePE(buffer, file.name, appState.theme === 'dark');
-      if (!pe.isValid) {
-        setErrorMsg(pe.error || 'Invalid PE File');
+      
+      // Simple format detection
+      const view = new DataView(buffer);
+      let parsedFile: ParsedFile | null = null;
+      
+      if (view.byteLength > 4) {
+          const magic = view.getUint32(0, false); // Big Endian check
+          
+          if (view.getUint16(0, true) === 0x5A4D) { // 'MZ'
+              parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
+          } else if (
+              magic === 0xFEEDFACE || magic === 0xCEFAEDFE || // Mach-O 32
+              magic === 0xFEEDFACF || magic === 0xCFFAEDFE    // Mach-O 64
+          ) {
+              parsedFile = parseMachO(buffer, file.name, appState.theme === 'dark');
+          } else {
+              // Fallback / Unknown
+               parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
+          }
+      } else {
+          parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
+      }
+
+      if (!parsedFile || !parsedFile.isValid) {
+        setErrorMsg(parsedFile?.error || 'Unrecognized or Invalid Binary File');
         return;
       }
       
@@ -80,7 +104,7 @@ const App: React.FC = () => {
       // Create new session
       const newSession: FileSession = {
           id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
-          file: pe,
+          file: parsedFile,
           selection: null,
           viewOffset: 0,
           searchResults: [],
@@ -148,7 +172,7 @@ const App: React.FC = () => {
     if (canvas) {
         const url = canvas.toDataURL('image/png');
         const link = document.createElement('a');
-        link.download = 'pe-view.png';
+        link.download = 'view.png';
         link.href = url;
         link.click();
     }
@@ -292,15 +316,13 @@ const App: React.FC = () => {
       onClick={() => setShowCopyMenu(false)} // Close menu on click outside
     >
       {/* Header / Toolbar */}
-      {/* Changed items-end to items-stretch to allow independent alignment of children */}
       <header className="bg-gray-800 border-b border-gray-700 flex items-stretch px-4 shrink-0 z-20 shadow-md h-12 select-none">
         {/* Title - Center Aligned */}
         <div className="flex items-center mr-4 shrink-0">
-           <h1 className="text-white font-bold text-lg tracking-tight">PE<span className="text-blue-400">Visualizer</span></h1>
+           <h1 className="text-white font-bold text-lg tracking-tight">Bin<span className="text-blue-400">Visualizer</span></h1>
         </div>
         
         {/* Tabs Container - Bottom Aligned */}
-        {/* Added min-w-0 to handle flex shrinking properly */}
         <div className="flex-1 flex items-end overflow-x-auto no-scrollbar gap-1 min-w-0">
              {appState.sessions.map(session => (
                  <div 
@@ -438,8 +460,12 @@ const App: React.FC = () => {
         {!activeSession && !errorMsg && (
              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none select-none">
                  <div className="text-6xl mb-4 opacity-20">📂</div>
-                 <p className="font-medium">Drag & Drop a PE file here</p>
-                 <p className="text-sm opacity-60 mt-2">or click "+ Open" above</p>
+                 <p className="font-medium">Drag & Drop a file here</p>
+                 <p className="text-sm opacity-60 mt-2">Supported: Windows PE (.exe, .dll), Mac Mach-O</p>
+                 <p className="text-xs opacity-40 mt-4 bg-gray-800 p-2 rounded">
+                    For Mac Apps (.app): Right click &gt; Show Package Contents<br/>
+                    Open Contents/MacOS/&lt;BinaryName&gt;
+                 </p>
              </div>
         )}
 
@@ -448,7 +474,10 @@ const App: React.FC = () => {
             <div className="flex w-full h-full">
                 {/* Left Sidebar */}
                 <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 shrink-0 flex flex-col">
-                    <div className="p-2 border-b border-gray-200 dark:border-gray-800 font-semibold text-xs uppercase text-gray-500 tracking-wider">Structure</div>
+                    <div className="p-2 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
+                        <span className="font-semibold text-xs uppercase text-gray-500 tracking-wider">Structure</span>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-gray-200 dark:bg-gray-800 rounded text-gray-500 uppercase">{activeSession.file.format}</span>
+                    </div>
                     <Sidebar 
                         file={activeSession.file} 
                         selectedRegion={activeSession.selection?.region || null} 

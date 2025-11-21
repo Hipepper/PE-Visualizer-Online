@@ -1,4 +1,5 @@
-import { PEFile, PERegion, RegionType, COLORS, DARK_COLORS, SectionMetadata } from '../types';
+
+import { ParsedFile, PERegion, RegionType, COLORS, DARK_COLORS, SectionMetadata } from '../types';
 
 // --- Constants & Enums ---
 
@@ -82,7 +83,7 @@ const formatHex = (val: number, pad: number = 0) => '0x' + val.toString(16).toUp
 
 // --- Main Parser ---
 
-export const parsePE = (buffer: ArrayBuffer, fileName: string, isDarkMode: boolean = true): PEFile => {
+export const parsePE = (buffer: ArrayBuffer, fileName: string, isDarkMode: boolean = true): ParsedFile => {
   const view = new DataView(buffer);
   const regions: PERegion[] = [];
   const sectionsMetadata: SectionMetadata[] = [];
@@ -90,13 +91,13 @@ export const parsePE = (buffer: ArrayBuffer, fileName: string, isDarkMode: boole
 
   // Basic Validation
   if (view.byteLength < 64) {
-    return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'File too small' };
+    return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'File too small', format: 'PE' };
   }
 
   // 1. DOS Header
   const e_magic = view.getUint16(0, true);
   if (e_magic !== 0x5A4D) { // 'MZ'
-    return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'Invalid DOS signature (not MZ)' };
+    return { name: fileName, size: buffer.byteLength, data: view, regions: [], sectionsMetadata: [], isValid: false, error: 'Invalid DOS signature (not MZ)', format: 'PE' };
   }
 
   const e_lfanew = view.getUint32(0x3C, true);
@@ -114,13 +115,13 @@ export const parsePE = (buffer: ArrayBuffer, fileName: string, isDarkMode: boole
   });
 
   if (e_lfanew + 4 > view.byteLength) {
-    return { name: fileName, size: buffer.byteLength, data: view, regions, sectionsMetadata: [], isValid: false, error: 'Invalid PE offset' };
+    return { name: fileName, size: buffer.byteLength, data: view, regions, sectionsMetadata: [], isValid: false, error: 'Invalid PE offset', format: 'PE' };
   }
 
   // 2. NT Headers (Signature)
   const signature = view.getUint32(e_lfanew, true);
   if (signature !== 0x00004550) { // 'PE\0\0'
-    return { name: fileName, size: buffer.byteLength, data: view, regions, sectionsMetadata: [], isValid: false, error: 'Invalid PE signature' };
+    return { name: fileName, size: buffer.byteLength, data: view, regions, sectionsMetadata: [], isValid: false, error: 'Invalid PE signature', format: 'PE' };
   }
   
   const ntHeadersRegion: PERegion = {
@@ -391,7 +392,8 @@ export const parsePE = (buffer: ArrayBuffer, fileName: string, isDarkMode: boole
     data: view,
     regions,
     sectionsMetadata,
-    isValid: true
+    isValid: true,
+    format: 'PE'
   };
 };
 

@@ -1,4 +1,6 @@
+
 export enum RegionType {
+  // Generic / PE
   DOS_HEADER = 'DOS Header',
   NT_HEADERS = 'NT Headers',
   FILE_HEADER = 'File Header',
@@ -8,7 +10,13 @@ export enum RegionType {
   DATA_DIRECTORY = 'Data Directory',
   OVERLAY = 'Overlay',
   FIELD = 'Field',
-  UNKNOWN = 'Unknown'
+  UNKNOWN = 'Unknown',
+  
+  // Mach-O Specific
+  MACHO_HEADER = 'Mach-O Header',
+  LOAD_COMMAND = 'Load Command',
+  SEGMENT = 'Segment',
+  SECTION = 'Section'
 }
 
 export interface PERegion {
@@ -31,7 +39,8 @@ export interface SectionMetadata {
   sizeOfRawData: number;
 }
 
-export interface PEFile {
+// Renamed from PEFile to ParsedFile to support multiple formats
+export interface ParsedFile {
   name: string;
   size: number;
   data: DataView;
@@ -39,6 +48,7 @@ export interface PEFile {
   sectionsMetadata: SectionMetadata[];
   isValid: boolean;
   error?: string;
+  format: 'PE' | 'Mach-O' | 'Unknown'; 
 }
 
 export interface SearchResult {
@@ -50,7 +60,7 @@ export interface SearchResult {
 
 export interface FileSession {
   id: string;
-  file: PEFile;
+  file: ParsedFile;
   selection: {
     offset: number;
     size: number;
@@ -80,6 +90,12 @@ export const COLORS = {
   OVERLAY: '#696969', // Dark Gray
   FIELD: '#00CED1',   // Dark Turquoise for Fields
   DEFAULT: '#A0A0A0',
+  
+  // Mach-O Colors
+  MACHO_HEADER: '#FF69B4', // Hot Pink
+  LOAD_COMMAND: '#CD5C5C', // Indian Red
+  SEGMENT: '#4169E1',      // Royal Blue
+  
   SEARCH_HIGHLIGHT: '#FFFF00', // Yellow
   SEARCH_CURRENT: '#FF4500'    // Orange Red
 };

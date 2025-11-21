@@ -1,8 +1,9 @@
+
 import React, { useState } from 'react';
-import { PERegion, PEFile } from '../types';
+import { PERegion, ParsedFile } from '../types';
 
 interface SidebarProps {
-  file: PEFile | null;
+  file: ParsedFile | null;
   selectedRegion: PERegion | null;
   onSelect: (region: PERegion) => void;
 }

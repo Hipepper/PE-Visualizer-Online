@@ -1,10 +1,11 @@
-import { PEFile, SearchResult } from '../types';
+
+import { ParsedFile, SearchResult } from '../types';
 import { offsetToRva } from './peParser';
 
 export type SearchMode = 'hex' | 'ascii' | 'unicode';
 
 export const searchPE = (
-    file: PEFile,
+    file: ParsedFile,
     query: string,
     mode: SearchMode,
     useRegex: boolean
