@@ -14,6 +14,7 @@ export enum RegionType {
   
   // Mach-O Specific
   MACHO_HEADER = 'Mach-O Header',
+  FAT_HEADER = 'Fat Header',
   LOAD_COMMAND = 'Load Command',
   SEGMENT = 'Segment',
   SECTION = 'Section'
@@ -93,6 +94,7 @@ export const COLORS = {
   
   // Mach-O Colors
   MACHO_HEADER: '#FF69B4', // Hot Pink
+  FAT_HEADER: '#C71585',   // Medium Violet Red
   LOAD_COMMAND: '#CD5C5C', // Indian Red
   SEGMENT: '#4169E1',      // Royal Blue
   

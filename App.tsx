@@ -83,7 +83,8 @@ const App: React.FC = () => {
               parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
           } else if (
               magic === 0xFEEDFACE || magic === 0xCEFAEDFE || // Mach-O 32
-              magic === 0xFEEDFACF || magic === 0xCFFAEDFE    // Mach-O 64
+              magic === 0xFEEDFACF || magic === 0xCFFAEDFE || // Mach-O 64
+              magic === 0xCAFEBABE || magic === 0xBEBAFECA    // Mach-O Fat
           ) {
               parsedFile = parseMachO(buffer, file.name, appState.theme === 'dark');
           } else {
@@ -404,7 +405,7 @@ const App: React.FC = () => {
 
                     {/* Search Toggle */}
                     <button 
-                        onClick={() => updateActiveSession({ isSearchOpen: true })} 
+                        onClick={() => updateActiveSession({ isSearchOpen: !activeSession.isSearchOpen })} 
                         className={`text-gray-300 hover:text-white p-1.5 rounded hover:bg-gray-700 ml-1 ${activeSession.isSearchOpen ? 'text-blue-400 bg-gray-900' : ''}`} 
                         title="Find (Ctrl+F)"
                     >
