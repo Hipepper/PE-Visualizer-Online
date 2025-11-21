@@ -4,6 +4,7 @@ import { AppState, PERegion, SearchResult, FileSession, ParsedFile } from './typ
 import { parsePE } from './services/peParser';
 import { parseMachO } from './services/machOParser';
 import { parseELF } from './services/elfParser';
+import { parsePNG, parseJPEG, parseHEIC } from './services/imageParser';
 import { Sidebar } from './components/Sidebar';
 import { HexViewer } from './components/HexViewer';
 import { Inspector } from './components/Inspector';
@@ -81,8 +82,9 @@ const App: React.FC = () => {
       
       if (view.byteLength >= 4) {
           const magic = view.getUint32(0, false); // Big Endian check
-          
-          // PE: 'MZ'
+          const magic16 = view.getUint16(0, false);
+
+          // PE: 'MZ' (0x5A4D little endian / 0x4D5A big endian if read as bytes, but getUint16(0, true) handles LE)
           if (view.getUint16(0, true) === 0x5A4D) { 
               parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
           } 
@@ -101,7 +103,22 @@ const App: React.FC = () => {
               magic === 0xCAFEBABF || magic === 0xBFBAFECA    // Mach-O Fat 64
           ) {
               parsedFile = parseMachO(buffer, file.name, appState.theme === 'dark');
-          } else {
+          } 
+          // PNG: 89 50 4E 47
+          else if (magic === 0x89504E47) {
+              parsedFile = parsePNG(buffer, file.name, appState.theme === 'dark');
+          }
+          // JPEG: FF D8
+          else if (magic16 === 0xFFD8) {
+              parsedFile = parseJPEG(buffer, file.name, appState.theme === 'dark');
+          }
+          // HEIC: ftyp starting at 4. Box size at 0.
+          else if (view.byteLength > 12 && 
+                  (view.getUint32(4, false) === 0x66747970) // 'ftyp'
+          ) {
+              parsedFile = parseHEIC(buffer, file.name, appState.theme === 'dark');
+          }
+          else {
               // Fallback / Unknown - Try PE first (it handles small file errors gracefully)
                parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
           }
@@ -323,6 +340,16 @@ const App: React.FC = () => {
       return () => window.removeEventListener('keydown', handleKey);
   }, [activeSession, copyMode]);
 
+  // Format Cards Data
+  const formatCards = [
+      { title: 'Windows PE', desc: 'Portable Executable', ext: '.exe, .dll, .sys', color: 'text-green-500', bg: 'bg-green-500' },
+      { title: 'macOS Mach-O', desc: 'Single & Fat Binaries', ext: '.macho, .dylib', color: 'text-pink-500', bg: 'bg-pink-500' },
+      { title: 'Linux ELF', desc: 'ELF 32/64-bit', ext: '.elf, .so, .o', color: 'text-blue-500', bg: 'bg-blue-500' },
+      { title: 'PNG Image', desc: 'Chunks & Data', ext: '.png', color: 'text-emerald-500', bg: 'bg-emerald-500' },
+      { title: 'JPEG Image', desc: 'Markers & Segments', ext: '.jpg, .jpeg', color: 'text-orange-500', bg: 'bg-orange-500' },
+      { title: 'HEIC / HEIF', desc: 'ISOBMFF Boxes', ext: '.heic, .heif', color: 'text-purple-500', bg: 'bg-purple-500' },
+  ];
+
   return (
     <div 
       className={`flex flex-col h-screen w-screen ${dragOver ? 'opacity-50' : ''}`}
@@ -442,7 +469,7 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden relative">
+      <div className="flex-1 flex overflow-hidden relative bg-gray-100 dark:bg-gray-950">
         
         <AboutModal isOpen={appState.isAboutOpen} onClose={() => setAppState(s => ({...s, isAboutOpen: false}))} />
 
@@ -481,13 +508,40 @@ const App: React.FC = () => {
         )}
 
         {!activeSession && !errorMsg && (
-             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none select-none">
-                 <div className="text-6xl mb-4 opacity-20">📂</div>
-                 <p className="font-medium">Drag & Drop a file here</p>
-                 <p className="text-sm opacity-60 mt-2">Supported: PE (.exe), Mach-O, ELF</p>
-                 <p className="text-xs opacity-40 mt-4 bg-gray-800 p-2 rounded">
-                    Analysis Tool | Reverse Engineering
-                 </p>
+             <div className="absolute inset-0 flex flex-col items-center justify-center p-8 overflow-y-auto">
+                 <div className="max-w-4xl w-full flex flex-col items-center">
+                     <div className="text-6xl mb-4 opacity-20 text-gray-400 animate-pulse">📂</div>
+                     <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-2">
+                        Drag & Drop a binary file to analyze
+                     </h2>
+                     <p className="text-gray-500 dark:text-gray-400 mb-10 text-center max-w-xl">
+                        Inspect structural details, parse headers, and visualize byte distributions for executables and images.
+                     </p>
+
+                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 w-full">
+                         {formatCards.map((fmt, idx) => (
+                             <div key={idx} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow flex items-start gap-3 group">
+                                 <div className={`w-2 h-full rounded-full ${fmt.bg} opacity-60 group-hover:opacity-100 transition-opacity`}></div>
+                                 <div className="flex-1">
+                                     <h3 className={`font-bold text-sm ${fmt.color} mb-1`}>{fmt.title}</h3>
+                                     <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{fmt.desc}</p>
+                                     <code className="text-[10px] bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-500">{fmt.ext}</code>
+                                 </div>
+                             </div>
+                         ))}
+                     </div>
+
+                     <div className="mt-10 text-center">
+                         <p className="text-xs uppercase tracking-widest text-gray-400 mb-2">Features</p>
+                         <div className="flex flex-wrap justify-center gap-2">
+                             {['Hex View', 'Structure Tree', 'Strings Search', 'Data Copy', 'Dark Mode', '100% Client-Side'].map((tag, i) => (
+                                 <span key={i} className="px-2 py-1 bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded font-medium">
+                                     {tag}
+                                 </span>
+                             ))}
+                         </div>
+                     </div>
+                 </div>
              </div>
         )}
 

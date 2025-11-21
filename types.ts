@@ -1,4 +1,5 @@
 
+
 export enum RegionType {
   // Generic / PE
   DOS_HEADER = 'DOS Header',
@@ -21,7 +22,14 @@ export enum RegionType {
 
   // ELF Specific
   ELF_HEADER = 'ELF Header',
-  PROGRAM_HEADER = 'Program Header'
+  PROGRAM_HEADER = 'Program Header',
+
+  // Image Specific
+  IMAGE_HEADER = 'Image Header',
+  PNG_CHUNK = 'PNG Chunk',
+  JPEG_SEGMENT = 'JPEG Segment',
+  HEIC_BOX = 'HEIC Box',
+  IMAGE_DATA = 'Image Data'
 }
 
 export interface PERegion {
@@ -53,7 +61,7 @@ export interface ParsedFile {
   sectionsMetadata: SectionMetadata[];
   isValid: boolean;
   error?: string;
-  format: 'PE' | 'Mach-O' | 'ELF' | 'Unknown'; 
+  format: 'PE' | 'Mach-O' | 'ELF' | 'PNG' | 'JPEG' | 'HEIC' | 'Unknown'; 
 }
 
 export interface SearchResult {
@@ -106,6 +114,13 @@ export const COLORS = {
   // ELF Colors
   ELF_HEADER: '#20B2AA',     // Light Sea Green
   PROGRAM_HEADER: '#DA70D6', // Orchid
+
+  // Image Colors
+  IMAGE_HEADER: '#FF69B4',  // Hot Pink (Similar to Mach-O/Header style)
+  PNG_CHUNK: '#2E8B57',     // Sea Green
+  JPEG_SEGMENT: '#D2691E',  // Chocolate
+  HEIC_BOX: '#8A2BE2',      // Blue Violet
+  IMAGE_DATA: '#708090',    // Slate Gray
 
   SEARCH_HIGHLIGHT: '#FFFF00', // Yellow
   SEARCH_CURRENT: '#FF4500'    // Orange Red
