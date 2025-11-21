@@ -17,7 +17,11 @@ export enum RegionType {
   FAT_HEADER = 'Fat Header',
   LOAD_COMMAND = 'Load Command',
   SEGMENT = 'Segment',
-  SECTION = 'Section'
+  SECTION = 'Section',
+
+  // ELF Specific
+  ELF_HEADER = 'ELF Header',
+  PROGRAM_HEADER = 'Program Header'
 }
 
 export interface PERegion {
@@ -49,7 +53,7 @@ export interface ParsedFile {
   sectionsMetadata: SectionMetadata[];
   isValid: boolean;
   error?: string;
-  format: 'PE' | 'Mach-O' | 'Unknown'; 
+  format: 'PE' | 'Mach-O' | 'ELF' | 'Unknown'; 
 }
 
 export interface SearchResult {
@@ -79,6 +83,7 @@ export interface AppState {
   hoverOffset: number | null; // Transient UI state
   theme: 'dark' | 'light';
   isAnimating: boolean;
+  isAboutOpen: boolean;
 }
 
 export const COLORS = {
@@ -98,6 +103,10 @@ export const COLORS = {
   LOAD_COMMAND: '#CD5C5C', // Indian Red
   SEGMENT: '#4169E1',      // Royal Blue
   
+  // ELF Colors
+  ELF_HEADER: '#20B2AA',     // Light Sea Green
+  PROGRAM_HEADER: '#DA70D6', // Orchid
+
   SEARCH_HIGHLIGHT: '#FFFF00', // Yellow
   SEARCH_CURRENT: '#FF4500'    // Orange Red
 };

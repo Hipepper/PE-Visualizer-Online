@@ -3,10 +3,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AppState, PERegion, SearchResult, FileSession, ParsedFile } from './types';
 import { parsePE } from './services/peParser';
 import { parseMachO } from './services/machOParser';
+import { parseELF } from './services/elfParser';
 import { Sidebar } from './components/Sidebar';
 import { HexViewer } from './components/HexViewer';
 import { Inspector } from './components/Inspector';
 import { SearchDialog } from './components/SearchDialog';
+import { AboutModal } from './components/AboutModal';
 
 type CopyMode = 'hex' | 'hexArr' | 'cArr' | 'python' | 'binary' | 'base64';
 
@@ -27,6 +29,7 @@ const App: React.FC = () => {
     hoverOffset: null,
     theme: (localStorage.getItem('theme') as 'dark' | 'light') || 'dark',
     isAnimating: false,
+    isAboutOpen: false,
   }));
 
   const [dragOver, setDragOver] = useState(false);
@@ -79,9 +82,19 @@ const App: React.FC = () => {
       if (view.byteLength >= 4) {
           const magic = view.getUint32(0, false); // Big Endian check
           
-          if (view.getUint16(0, true) === 0x5A4D) { // 'MZ'
+          // PE: 'MZ'
+          if (view.getUint16(0, true) === 0x5A4D) { 
               parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
-          } else if (
+          } 
+          // ELF: 0x7F 'E' 'L' 'F'
+          else if (view.getUint8(0) === 0x7F && 
+                   view.getUint8(1) === 0x45 && 
+                   view.getUint8(2) === 0x4C && 
+                   view.getUint8(3) === 0x46) {
+              parsedFile = parseELF(buffer, file.name, appState.theme === 'dark');
+          }
+          // Mach-O
+          else if (
               magic === 0xFEEDFACE || magic === 0xCEFAEDFE || // Mach-O 32
               magic === 0xFEEDFACF || magic === 0xCFFAEDFE || // Mach-O 64
               magic === 0xCAFEBABE || magic === 0xBEBAFECA || // Mach-O Fat
@@ -89,11 +102,11 @@ const App: React.FC = () => {
           ) {
               parsedFile = parseMachO(buffer, file.name, appState.theme === 'dark');
           } else {
-              // Fallback / Unknown - Try PE first
+              // Fallback / Unknown - Try PE first (it handles small file errors gracefully)
                parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
           }
       } else {
-          // Small files fallback to PE parser which handles small file errors gracefully
+          // Small files fallback to PE parser
           parsedFile = parsePE(buffer, file.name, appState.theme === 'dark');
       }
 
@@ -322,7 +335,9 @@ const App: React.FC = () => {
       <header className="bg-gray-800 border-b border-gray-700 flex items-stretch px-4 shrink-0 z-20 shadow-md h-12 select-none">
         {/* Title - Center Aligned */}
         <div className="flex items-center mr-4 shrink-0">
-           <h1 className="text-white font-bold text-lg tracking-tight">Bin<span className="text-blue-400">Visualizer</span></h1>
+           <h1 className="text-white font-bold text-lg tracking-tight cursor-pointer" onClick={() => setAppState(s => ({...s, isAboutOpen: true}))}>
+             Bin<span className="text-blue-400">Visualizer</span>
+           </h1>
         </div>
         
         {/* Tabs Container - Bottom Aligned */}
@@ -417,8 +432,11 @@ const App: React.FC = () => {
                     <button onClick={exportPNG} className="text-gray-300 hover:text-white text-xs px-2 py-1.5 bg-gray-700 rounded hover:bg-gray-600 ml-1" title="Export View as PNG">PNG</button>
                 </>
             )}
-            <button onClick={toggleTheme} className="text-gray-400 hover:text-white p-1.5 rounded ml-1">
+            <button onClick={toggleTheme} className="text-gray-400 hover:text-white p-1.5 rounded ml-1" title="Toggle Theme">
                 {appState.theme === 'dark' ? '🌙' : '☀️'}
+            </button>
+            <button onClick={() => setAppState(s => ({...s, isAboutOpen: true}))} className="text-gray-400 hover:text-white p-1.5 rounded ml-1" title="About / Roadmap">
+                ℹ️
             </button>
         </div>
       </header>
@@ -426,6 +444,8 @@ const App: React.FC = () => {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden relative">
         
+        <AboutModal isOpen={appState.isAboutOpen} onClose={() => setAppState(s => ({...s, isAboutOpen: false}))} />
+
         {/* Search Dialog */}
         {activeSession && (
             <SearchDialog 
@@ -464,10 +484,9 @@ const App: React.FC = () => {
              <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none select-none">
                  <div className="text-6xl mb-4 opacity-20">📂</div>
                  <p className="font-medium">Drag & Drop a file here</p>
-                 <p className="text-sm opacity-60 mt-2">Supported: Windows PE (.exe, .dll), Mac Mach-O</p>
+                 <p className="text-sm opacity-60 mt-2">Supported: PE (.exe), Mach-O, ELF</p>
                  <p className="text-xs opacity-40 mt-4 bg-gray-800 p-2 rounded">
-                    For Mac Apps (.app): Right click &gt; Show Package Contents<br/>
-                    Open Contents/MacOS/&lt;BinaryName&gt;
+                    Analysis Tool | Reverse Engineering
                  </p>
              </div>
         )}
